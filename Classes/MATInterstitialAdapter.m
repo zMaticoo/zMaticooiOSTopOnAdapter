@@ -7,6 +7,7 @@
 
 #import "MATInterstitialAdapter.h"
 @import MaticooSDK;
+#import "MaticooToponAdapterDebugLog.h"
 
 static NSString * const kAdapterSource = @"top_on";
 static const NSInteger kAdTypeInterstitial = 2;
@@ -116,7 +117,7 @@ static NSString *MATAdTypeDes(NSString *placementId, NSString * _Nullable msg) {
     self.delegate.placementId = placementIdentifier;
     self.interstitial.delegate = self.delegate;
 
-    NSLog(@"[MATInterstitialAdapter] serverContentDic = %@", argument.serverContentDic);
+    MaticooToponAdapterDebugLog(@"[MATInterstitialAdapter] serverContentDic = %@", argument.serverContentDic);
     ATUnitGroupModel *trackingInfoUnitGroupModel = argument.serverContentDic[@"tracking_info_unit_group_model"];;
     if (trackingInfoUnitGroupModel && trackingInfoUnitGroupModel.headerBidding) {
         MATBiddingRequestParameter *param = [[MATBiddingRequestParameter alloc] init];
@@ -146,9 +147,17 @@ static NSString *MATAdTypeDes(NSString *placementId, NSString * _Nullable msg) {
 
 - (void)didReceiveBidResult:(ATBidWinLossResult *)result {
     if (result.bidResultType == ATBidWinLossResultTypeWin) {
-        NSLog(@"[MATInterstitialAdapter] bid win, winPrice=%@, secondPrice=%@", result.winPrice, result.secondPrice);
+        NSString *winPrice = result.winPrice;
+        if (winPrice == nil) {
+            MATBiddingResponse *bidResponse = self.bidResponse;
+            if (bidResponse) {
+                winPrice = [NSString stringWithFormat:@"%f", bidResponse.price];
+            }
+        }
+        
+        MaticooToponAdapterDebugLog(@"[MATInterstitialAdapter] bid win, winPrice=%@, secondPrice=%@", winPrice, result.secondPrice);
         NSString *des = [NSString stringWithFormat:@"{\"placementId\":\"%@\",\"adType\":%ld,\"source\":\"%@\",\"winPrice\":\"%@\",\"secondPrice\":\"%@\"}",
-                         self.placementId ?: @"", (long)kAdTypeInterstitial, kAdapterSource, result.winPrice ?: @"", result.secondPrice ?: @""];
+                         self.placementId ?: @"", (long)kAdTypeInterstitial, kAdapterSource, winPrice ?: @"", result.secondPrice ?: @""];
         [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_bid_win" des:des];
         if (self.bidResponse) {
             [MATBiddingRequest reportTrack:self.bidResponse];
@@ -166,7 +175,7 @@ static NSString *MATAdTypeDes(NSString *placementId, NSString * _Nullable msg) {
             default:
                 break;
         }
-        NSLog(@"[MATInterstitialAdapter] bid loss, lossReason=%ld, winPrice=%@", (long)result.lossReasonType, result.winPrice);
+        MaticooToponAdapterDebugLog(@"[MATInterstitialAdapter] bid loss, lossReason=%ld, winPrice=%@", (long)result.lossReasonType, result.winPrice);
         NSString *des = [NSString stringWithFormat:@"{\"placementId\":\"%@\",\"adType\":%ld,\"source\":\"%@\",\"winPrice\":\"%@\",\"lossReason\":\"%@\"}",
                          self.placementId ?: @"", (long)kAdTypeInterstitial, kAdapterSource, result.winPrice ?: @"", lossReason];
         [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_bid_loss" des:des];
