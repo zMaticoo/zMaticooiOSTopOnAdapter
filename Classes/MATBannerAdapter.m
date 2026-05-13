@@ -83,8 +83,10 @@
           rawPlacement ? NSStringFromClass([rawPlacement class]) : @"(nil)",
           argument.serverContentDic ? [[argument.serverContentDic allKeys] componentsJoinedByString:@","] : @"(nil)");
     [super loadADWithArgument:argument];
-    NSDictionary *localInfo = argument.localInfoDic;
-    CGSize adSize = [localInfo[kATAdLoadingExtraBannerAdSizeKey] respondsToSelector:@selector(CGSizeValue)] ? [localInfo[kATAdLoadingExtraBannerAdSizeKey] CGSizeValue] : CGSizeMake(320.0f, 50.0f);
+    // localInfoDic 理论上应是 NSDictionary，但若 TopOn 内部或测试桩塞了非字典实例，下标访问会崩溃，先做类型校验。
+    NSDictionary *localInfo = [argument.localInfoDic isKindOfClass:[NSDictionary class]] ? argument.localInfoDic : nil;
+    id sizeValue = localInfo[kATAdLoadingExtraBannerAdSizeKey];
+    CGSize adSize = [sizeValue respondsToSelector:@selector(CGSizeValue)] ? [sizeValue CGSizeValue] : CGSizeMake(320.0f, 50.0f);
     NSString *placementIdentifier = argument.serverContentDic[@"placement_id"];
     if (![placementIdentifier isKindOfClass:[NSString class]] || placementIdentifier.length == 0) {
         MaticooToponAdapterDebugLog(@"%@ banner loadADWithArgument FAIL_EMPTY_PLACEMENT adapter=%p", MATToponAdapterLogPrefix, self);
@@ -108,7 +110,16 @@
         }
         extra[@"source"] = MATToponAdapterMediationSourceValue;
         [(MATBannerAd *)self->_bannerAd setLocalExtra:[extra copy]];
-        ATUnitGroupModel *trackingInfoUnitGroupModel = argument.serverContentDic[@"tracking_info_unit_group_model"];
+        id canCloseObj = localInfo[@"can_close_ad"];
+        if ([canCloseObj isKindOfClass:[NSNumber class]]) {
+            ((MATBannerAd *)self->_bannerAd).canCloseAd = [(NSNumber *)canCloseObj boolValue];
+        } else if ([canCloseObj isKindOfClass:[NSString class]]) {
+            ((MATBannerAd *)self->_bannerAd).canCloseAd = [(NSString *)canCloseObj boolValue];
+        }
+        self->_bannerAd.frame = CGRectMake(0, 0, adSize.width, adSize.height);
+        id rawTrackingInfo = argument.serverContentDic[@"tracking_info_unit_group_model"];
+        ATUnitGroupModel *trackingInfoUnitGroupModel =
+            [rawTrackingInfo isKindOfClass:[ATUnitGroupModel class]] ? rawTrackingInfo : nil;
         if (trackingInfoUnitGroupModel && trackingInfoUnitGroupModel.headerBidding) {
             MaticooToponAdapterDebugLog(@"%@ banner loadADWithArgument HB_BIDDING_REQUEST adapter=%p placement=%@", MATToponAdapterLogPrefix, self, placementIdentifier);
             MATBiddingRequestParameter *param = [[MATBiddingRequestParameter alloc] init];
@@ -142,7 +153,6 @@
         } else {
             [self->_bannerAd loadAd];
         }
-        self->_bannerAd.frame = CGRectMake(0, 0, adSize.width, adSize.height);
         MaticooToponAdapterDebugLog(@"%@ banner loadADWithArgument MAIN_BLOCK_END adapter=%p placement=%@ bannerAd=%p delegate=%p",
               MATToponAdapterLogPrefix, self, placementIdentifier, self->_bannerAd, self->_delegate);
     });
@@ -188,7 +198,10 @@
 
 - (NSDictionary *)ensureParams:(NSDictionary *)dict{
     NSMutableDictionary * newDict = [NSMutableDictionary dictionary];
-    
+    if (![dict isKindOfClass:[NSDictionary class]]) {
+        return newDict;
+    }
+
     @try {
         [dict enumerateKeysAndObjectsUsingBlock:^(id key, id obj, BOOL *stop) {
             if ([obj isKindOfClass:[NSString class]]) {
@@ -206,11 +219,11 @@
 
 - (void)dealloc {
     MaticooToponAdapterDebugLog(@"%@ banner MATBannerAdapter dealloc adapter=%p placementId=%@ thread=%@ main=%d",
-          MATToponAdapterLogPrefix, self, self.placementId, [NSThread currentThread], [NSThread isMainThread]);
-    [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_destroy" des:MATToponAdapterEventDes(self.placementId, MATToponAdapterAdTypeBanner, nil)];
-    MATBannerAd *ad = self.bannerAd;
-    self.bannerAd.delegate = nil;
-    self.bannerAd = nil;
+          MATToponAdapterLogPrefix, self, _placementId, [NSThread currentThread], [NSThread isMainThread]);
+    [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_destroy" des:MATToponAdapterEventDes(_placementId, MATToponAdapterAdTypeBanner, nil)];
+    MATBannerAd *ad = _bannerAd;
+    _bannerAd.delegate = nil;
+    _bannerAd = nil;
     if (ad) {
         dispatch_async(dispatch_get_main_queue(), ^{
             [ad destroy];

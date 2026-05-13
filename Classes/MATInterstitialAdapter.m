@@ -98,8 +98,8 @@ static NSString *MATAdTypeDes(NSString *placementId, NSString * _Nullable msg) {
     [super loadADWithArgument:argument];
 
     NSString *placementIdentifier = argument.serverContentDic[@"placement_id"];
-    if (!placementIdentifier.length) {
-        [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed" des:MATAdTypeDes(placementIdentifier, @"placement_id is empty")];
+    if (![placementIdentifier isKindOfClass:[NSString class]] || placementIdentifier.length == 0) {
+        [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed" des:MATAdTypeDes(nil, @"placement_id is empty")];
         [self.adStatusBridge atOnAdLoadFailed:[NSError errorWithDomain:ATADLoadingErrorDomain
                                                                   code:ATAdErrorCodeThirdPartySDKNotImportedProperly
                                                               userInfo:@{NSLocalizedDescriptionKey:@"AT has failed to load interstitial.",
@@ -109,40 +109,50 @@ static NSString *MATAdTypeDes(NSString *placementId, NSString * _Nullable msg) {
     }
 
     self.placementId = placementIdentifier;
-    [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load" des:MATAdTypeDes(placementIdentifier, nil)];
-
-    self.interstitial = [[MATInterstitialAd alloc] initWithPlacementID:placementIdentifier];
-    self.delegate = [[MATInterstitialAdapterDelegate alloc] init];
-    self.delegate.adStatusBridge = self.adStatusBridge;
-    self.delegate.placementId = placementIdentifier;
-    self.interstitial.delegate = self.delegate;
-
     MaticooToponAdapterDebugLog(@"[MATInterstitialAdapter] serverContentDic = %@", argument.serverContentDic);
-    ATUnitGroupModel *trackingInfoUnitGroupModel = argument.serverContentDic[@"tracking_info_unit_group_model"];;
-    if (trackingInfoUnitGroupModel && trackingInfoUnitGroupModel.headerBidding) {
-        MATBiddingRequestParameter *param = [[MATBiddingRequestParameter alloc] init];
-        param.placementId = placementIdentifier;
-        param.adxId = @"topon_adapter_bidding";
-        __weak __typeof__(self) weakSelf = self;
-        [MATBiddingRequest biddingRequestWithParameter:param completion:^(MATBiddingResponse * _Nullable bidResponse) {
-            __strong __typeof__(weakSelf) strongSelf = weakSelf;
-            if (!strongSelf) return;
-            if (bidResponse.success) {
-                strongSelf.delegate.bidPriceStr = [NSString stringWithFormat:@"%f", bidResponse.price];
-                strongSelf.bidResponse = bidResponse;
-                [strongSelf.interstitial loadAd:bidResponse.bidToken];
-            } else {
-                [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed" des:MATAdTypeDes(placementIdentifier, @"bid request failed")];
-                [strongSelf.adStatusBridge atOnAdLoadFailed:[NSError errorWithDomain:ATADLoadingErrorDomain
-                                                                                code:ATAdErrorCodeThirdPartySDKNotImportedProperly
-                                                                            userInfo:@{NSLocalizedDescriptionKey:@"AT has failed to load interstitial.",
-                                                                                       NSLocalizedFailureReasonErrorKey:@"bid token is failed"}]
-                                                    adExtra:nil];
-            }
-        }];
-    } else {
-        [self.interstitial loadAd];
-    }
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load" des:MATAdTypeDes(placementIdentifier, nil)];
+
+        self.interstitial = [[MATInterstitialAd alloc] initWithPlacementID:placementIdentifier];
+        self.delegate = [[MATInterstitialAdapterDelegate alloc] init];
+        self.delegate.adStatusBridge = self.adStatusBridge;
+        self.delegate.placementId = placementIdentifier;
+        self.interstitial.delegate = self.delegate;
+
+        id rawTrackingInfo = argument.serverContentDic[@"tracking_info_unit_group_model"];
+        ATUnitGroupModel *trackingInfoUnitGroupModel =
+            [rawTrackingInfo isKindOfClass:[ATUnitGroupModel class]] ? rawTrackingInfo : nil;
+        if (trackingInfoUnitGroupModel && trackingInfoUnitGroupModel.headerBidding) {
+            MATBiddingRequestParameter *param = [[MATBiddingRequestParameter alloc] init];
+            param.placementId = placementIdentifier;
+            param.adxId = @"topon_adapter_bidding";
+            __weak __typeof__(self) weakSelf = self;
+            [MATBiddingRequest biddingRequestWithParameter:param completion:^(MATBiddingResponse * _Nullable bidResponse) {
+                __strong __typeof__(weakSelf) strongSelf = weakSelf;
+                if (!strongSelf) return;
+                BOOL bidOk = (bidResponse != nil && bidResponse.success);
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    __strong __typeof__(weakSelf) strongSelfMain = weakSelf;
+                    if (!strongSelfMain) return;
+                    if (bidOk && bidResponse.bidToken.length > 0) {
+                        strongSelfMain.delegate.bidPriceStr = [NSString stringWithFormat:@"%f", bidResponse.price];
+                        strongSelfMain.bidResponse = bidResponse;
+                        [strongSelfMain.interstitial loadAd:bidResponse.bidToken];
+                    } else {
+                        [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed" des:MATAdTypeDes(placementIdentifier, @"bid request failed")];
+                        [strongSelfMain.adStatusBridge atOnAdLoadFailed:[NSError errorWithDomain:ATADLoadingErrorDomain
+                                                                                            code:ATAdErrorCodeThirdPartySDKNotImportedProperly
+                                                                                        userInfo:@{NSLocalizedDescriptionKey:@"AT has failed to load interstitial.",
+                                                                                                   NSLocalizedFailureReasonErrorKey:@"bid token is failed"}]
+                                                            adExtra:nil];
+                    }
+                });
+            }];
+        } else {
+            [self.interstitial loadAd];
+        }
+    });
 }
 
 - (void)didReceiveBidResult:(ATBidWinLossResult *)result {
@@ -192,7 +202,7 @@ static NSString *MATAdTypeDes(NSString *placementId, NSString * _Nullable msg) {
 }
 
 - (void)dealloc {
-    [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_destroy" des:MATAdTypeDes(self.placementId, nil)];
+    [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_destroy" des:MATAdTypeDes(_placementId, nil)];
 }
 
 @end

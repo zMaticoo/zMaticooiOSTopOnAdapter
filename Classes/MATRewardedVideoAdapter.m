@@ -126,7 +126,9 @@
         self->_delegate.adStatusBridge = self.adStatusBridge;
         self->_delegate.placementId = placementIdentifier;
         self->_rewardedVideoAd.delegate = self->_delegate;
-        ATUnitGroupModel *trackingInfoUnitGroupModel = argument.serverContentDic[@"tracking_info_unit_group_model"];
+        id rawTrackingInfo = argument.serverContentDic[@"tracking_info_unit_group_model"];
+        ATUnitGroupModel *trackingInfoUnitGroupModel =
+            [rawTrackingInfo isKindOfClass:[ATUnitGroupModel class]] ? rawTrackingInfo : nil;
         if (trackingInfoUnitGroupModel && trackingInfoUnitGroupModel.headerBidding) {
             MaticooToponAdapterDebugLog(@"%@ rv loadADWithArgument HB_BIDDING_REQUEST adapter=%p placement=%@", MATToponAdapterLogPrefix, self, placementIdentifier);
             MATBiddingRequestParameter *param = [[MATBiddingRequestParameter alloc] init];
@@ -136,20 +138,25 @@
             [MATBiddingRequest biddingRequestWithParameter:param completion:^(MATBiddingResponse * _Nullable bidResponse) {
                 __strong __typeof__(weakSelf) strongSelf = weakSelf;
                 if (!strongSelf) return;
+                BOOL bidOk = (bidResponse != nil && bidResponse.success);
                 MaticooToponAdapterDebugLog(@"%@ rv loadADWithArgument HB_BIDDING_RESPONSE adapter=%p placement=%@ success=%d price=%f token=%@",
-                      MATToponAdapterLogPrefix, strongSelf, placementIdentifier, bidResponse.success, bidResponse.price, bidResponse.bidToken);
-                if (bidResponse.success) {
-                    strongSelf.delegate.bidPriceStr = [NSString stringWithFormat:@"%f", bidResponse.price];
-                    strongSelf.bidResponse = bidResponse;
-                    [strongSelf.rewardedVideoAd loadAd:bidResponse.bidToken];
-                } else {
-                    [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed" des:MATToponAdapterEventDes(placementIdentifier, MATToponAdapterAdTypeRewardVideo, @"bid request failed")];
-                    [strongSelf.adStatusBridge atOnAdLoadFailed:[NSError errorWithDomain:ATADLoadingErrorDomain
+                      MATToponAdapterLogPrefix, strongSelf, placementIdentifier, bidOk, bidResponse ? bidResponse.price : 0, bidResponse.bidToken ?: @"(nil)");
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    __strong __typeof__(weakSelf) strongSelfMain = weakSelf;
+                    if (!strongSelfMain) return;
+                    if (bidOk && bidResponse.bidToken.length > 0) {
+                        strongSelfMain.delegate.bidPriceStr = [NSString stringWithFormat:@"%f", bidResponse.price];
+                        strongSelfMain.bidResponse = bidResponse;
+                        [strongSelfMain.rewardedVideoAd loadAd:bidResponse.bidToken];
+                    } else {
+                        [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed" des:MATToponAdapterEventDes(placementIdentifier, MATToponAdapterAdTypeRewardVideo, @"bid request failed")];
+                        [strongSelfMain.adStatusBridge atOnAdLoadFailed:[NSError errorWithDomain:ATADLoadingErrorDomain
                                                                                     code:ATAdErrorCodeThirdPartySDKNotImportedProperly
                                                                                 userInfo:@{NSLocalizedDescriptionKey:@"AT has failed to load rewarded video.",
                                                                                            NSLocalizedFailureReasonErrorKey:@"bid token is failed"}]
                                                         adExtra:nil];
-                }
+                    }
+                });
             }];
         } else {
             [self->_rewardedVideoAd loadAd];
@@ -211,10 +218,10 @@
 
 - (void)dealloc {
     MaticooToponAdapterDebugLog(@"%@ rv MATRewardedVideoAdapter dealloc adapter=%p placementId=%@ thread=%@ main=%d",
-          MATToponAdapterLogPrefix, self, self.placementId, [NSThread currentThread], [NSThread isMainThread]);
-    [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_destroy" des:MATToponAdapterEventDes(self.placementId, MATToponAdapterAdTypeRewardVideo, nil)];
-    self.rewardedVideoAd.delegate = nil;
-    self.rewardedVideoAd = nil;
+          MATToponAdapterLogPrefix, self, _placementId, [NSThread currentThread], [NSThread isMainThread]);
+    [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_destroy" des:MATToponAdapterEventDes(_placementId, MATToponAdapterAdTypeRewardVideo, nil)];
+    _rewardedVideoAd.delegate = nil;
+    _rewardedVideoAd = nil;
 }
 
 @end
