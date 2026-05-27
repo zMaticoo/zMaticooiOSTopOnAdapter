@@ -91,7 +91,7 @@
     if (![placementIdentifier isKindOfClass:[NSString class]] || placementIdentifier.length == 0) {
         MaticooToponAdapterDebugLog(@"%@ banner loadADWithArgument FAIL_EMPTY_PLACEMENT adapter=%p", MATToponAdapterLogPrefix, self);
         [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed" des:MATToponAdapterEventDes(@"", MATToponAdapterAdTypeBanner, @"placement_id is empty")];
-        [self.adStatusBridge atOnAdLoadFailed:[NSError errorWithDomain:ATADLoadingErrorDomain code:ATAdErrorCodeThirdPartySDKNotImportedProperly userInfo:@{NSLocalizedDescriptionKey:@"AT has failed to banner.", NSLocalizedFailureReasonErrorKey:@"placementid cannot be nill"}] adExtra:nil];
+        [self.adStatusBridge atOnAdLoadFailed:MATToponAdapterErrorInvalidPlacement(@"banner") adExtra:nil];
         return;
     }
     self.placementId = placementIdentifier;
@@ -142,10 +142,7 @@
                         [strongSelfMain.bannerAd loadAd:bidResponse.bidToken];
                     } else {
                         [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed" des:MATToponAdapterEventDes(placementIdentifier, MATToponAdapterAdTypeBanner, @"bid request failed")];
-                        [strongSelfMain.adStatusBridge atOnAdLoadFailed:[NSError errorWithDomain:ATADLoadingErrorDomain
-                                                                                            code:ATAdErrorCodeThirdPartySDKNotImportedProperly
-                                                                                        userInfo:@{NSLocalizedDescriptionKey:@"AT has failed to banner.",
-                                                                                                   NSLocalizedFailureReasonErrorKey:@"bid token is failed"}]
+                        [strongSelfMain.adStatusBridge atOnAdLoadFailed:MATToponAdapterErrorBiddingFailed(@"banner")
                                                             adExtra:nil];
                     }
                 });

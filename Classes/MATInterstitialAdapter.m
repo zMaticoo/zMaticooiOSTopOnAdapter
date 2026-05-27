@@ -100,10 +100,7 @@ static NSString *MATAdTypeDes(NSString *placementId, NSString * _Nullable msg) {
     NSString *placementIdentifier = argument.serverContentDic[@"placement_id"];
     if (![placementIdentifier isKindOfClass:[NSString class]] || placementIdentifier.length == 0) {
         [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed" des:MATAdTypeDes(nil, @"placement_id is empty")];
-        [self.adStatusBridge atOnAdLoadFailed:[NSError errorWithDomain:ATADLoadingErrorDomain
-                                                                  code:ATAdErrorCodeThirdPartySDKNotImportedProperly
-                                                              userInfo:@{NSLocalizedDescriptionKey:@"AT has failed to load interstitial.",
-                                                                         NSLocalizedFailureReasonErrorKey:@"placementid cannot be nil"}]
+        [self.adStatusBridge atOnAdLoadFailed:MATToponAdapterErrorInvalidPlacement(@"interstitial")
                                       adExtra:nil];
         return;
     }
@@ -141,10 +138,7 @@ static NSString *MATAdTypeDes(NSString *placementId, NSString * _Nullable msg) {
                         [strongSelfMain.interstitial loadAd:bidResponse.bidToken];
                     } else {
                         [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed" des:MATAdTypeDes(placementIdentifier, @"bid request failed")];
-                        [strongSelfMain.adStatusBridge atOnAdLoadFailed:[NSError errorWithDomain:ATADLoadingErrorDomain
-                                                                                            code:ATAdErrorCodeThirdPartySDKNotImportedProperly
-                                                                                        userInfo:@{NSLocalizedDescriptionKey:@"AT has failed to load interstitial.",
-                                                                                                   NSLocalizedFailureReasonErrorKey:@"bid token is failed"}]
+                        [strongSelfMain.adStatusBridge atOnAdLoadFailed:MATToponAdapterErrorBiddingFailed(@"interstitial")
                                                             adExtra:nil];
                     }
                 });

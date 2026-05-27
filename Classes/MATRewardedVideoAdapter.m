@@ -113,7 +113,7 @@
     if (![placementIdentifier isKindOfClass:[NSString class]] || placementIdentifier.length == 0) {
         MaticooToponAdapterDebugLog(@"%@ rv loadADWithArgument FAIL_EMPTY_PLACEMENT adapter=%p", MATToponAdapterLogPrefix, self);
         [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed" des:MATToponAdapterEventDes(@"", MATToponAdapterAdTypeRewardVideo, @"placement_id is empty")];
-        [self.adStatusBridge atOnAdLoadFailed:[NSError errorWithDomain:ATADLoadingErrorDomain code:ATAdErrorCodeThirdPartySDKNotImportedProperly userInfo:@{NSLocalizedDescriptionKey:@"AT has failed to load rewarded video.", NSLocalizedFailureReasonErrorKey:@"placementid cannot be nill"}] adExtra:nil];
+        [self.adStatusBridge atOnAdLoadFailed:MATToponAdapterErrorInvalidPlacement(@"rewarded video") adExtra:nil];
         return;
     }
     self.placementId = placementIdentifier;
@@ -150,10 +150,7 @@
                         [strongSelfMain.rewardedVideoAd loadAd:bidResponse.bidToken];
                     } else {
                         [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed" des:MATToponAdapterEventDes(placementIdentifier, MATToponAdapterAdTypeRewardVideo, @"bid request failed")];
-                        [strongSelfMain.adStatusBridge atOnAdLoadFailed:[NSError errorWithDomain:ATADLoadingErrorDomain
-                                                                                    code:ATAdErrorCodeThirdPartySDKNotImportedProperly
-                                                                                userInfo:@{NSLocalizedDescriptionKey:@"AT has failed to load rewarded video.",
-                                                                                           NSLocalizedFailureReasonErrorKey:@"bid token is failed"}]
+                        [strongSelfMain.adStatusBridge atOnAdLoadFailed:MATToponAdapterErrorBiddingFailed(@"rewarded video")
                                                         adExtra:nil];
                     }
                 });
