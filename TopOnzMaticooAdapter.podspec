@@ -8,61 +8,38 @@
 
 Pod::Spec.new do |s|
   s.name             = 'TopOnzMaticooAdapter'
-  s.version          = '2.2.0'
-  s.summary          = 'A short description of TopOnzMaticooAdapter.'
-
-# This description is used to generate tags and improve search results.
-#   * Think: What does it do? Why did you write it? What is the focus?
-#   * Try to keep it short, snappy and to the point.
-#   * Write the description between the DESC delimiters below.
-#   * Finally, don't worry about the indent, CocoaPods strips it!
+  s.version          = '2.2.0.1'
+  s.summary          = 'zMaticoo iOS SDK AnyThinkiOS (TopOn) Adapter.'
 
   s.description      = <<-DESC
-This is zMaticoo iOS SDK AnyThinkiOS Adaper.
+This is zMaticoo iOS SDK AnyThinkiOS Adapter.
+Supports Latest TopOn and Legacy TopOn (AnyThinkiOS <= 6.4.92) via mutually exclusive subspecs.
                        DESC
 
   s.homepage         = 'https://www.zmaticoo.com'
-  # s.screenshots     = 'www.example.com/screenshots_1', 'www.example.com/screenshots_2'
   s.license          = { :type => 'MIT', :file => 'LICENSE' }
   s.author           = { '15967863@qq.com' => 'lovely-kitty@live.cn' }
   s.source           = { :git => 'https://github.com/zMaticoo/zMaticooiOSTopOnAdapter.git', :tag => s.version.to_s }
-  # s.social_media_url = 'https://twitter.com/<TWITTER_USERNAME>'
 
   s.ios.deployment_target = '12.0'
+  s.static_framework = true
 
-  s.source_files = 'TopOnzMaticooAdapter/Classes/**/*'
-  
-  # s.resource_bundles = {
-  #   'TopOnzMaticooAdapter' => ['TopOnzMaticooAdapter/Assets/*.png']
-  # }
+  # Latest 与 Legacy 互斥：类名相同（TopOn 按类名注册），同一 target 只能选其一。
+  #   pod 'TopOnzMaticooAdapter'                              → Latest（默认）
+  #   pod 'TopOnzMaticooAdapter', :subspecs => ['Legacy']     → AnyThinkiOS ≤ 6.4.92
+  s.default_subspec = 'Latest'
 
-  # s.public_header_files = 'Pod/Classes/**/*.h'
-  # s.frameworks = 'UIKit', 'MapKit'
-  # s.dependency 'AFNetworking', '~> 2.3'
+  # 当前 TopOn / AnyThinkiOS（> 6.4.92）适配器
+  s.subspec 'Latest' do |ss|
+    ss.source_files = 'Classes/**/*.{h,m}'
+    ss.dependency 'zMaticoo'
+    ss.dependency 'AnyThinkiOS'
+  end
 
-# ―――  Spec License  ――――――――――――――――――――――――――――――――――――――――――――――――――――――――――― #
-  #
-  #  Licensing your code is important. See https://choosealicense.com for more info.
-  #  CocoaPods will detect a license file if there is a named LICENSE*
-  #  Popular ones are 'MIT', 'BSD' and 'Apache License, Version 2.0'.
-  #
-
-  #spec.license      = "MIT (example)"
-   s.dependency 'AnyThinkiOS'
-   s.dependency 'zMaticoo'
-   s.static_framework = true
-
-# ――― Source Code ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――― #
-  #
-  #  CocoaPods is smart about how it includes source code. For source files
-  #  giving a folder will include any swift, h, m, mm, c & cpp files.
-  #  For header files it will include any header in the folder.
-  #  Not including the public_header_files will make all headers public.
-  #
-
-  s.source_files  = "Classes", "Classes/**/*.{h,m}"
-  #spec.exclude_files = "Classes/Exclude"
-
-  # spec.public_header_files = "Classes/**/*.h"
-
+  # TopOn / AnyThinkiOS 6.4.92 及以前版本兼容适配器
+  s.subspec 'Legacy' do |ss|
+    ss.source_files = 'ClassesLegacy/**/*.{h,m}'
+    ss.dependency 'zMaticoo'
+    ss.dependency 'AnyThinkiOS', '<= 6.4.92'
+  end
 end
