@@ -8,12 +8,13 @@
 
 Pod::Spec.new do |s|
   s.name             = 'TopOnzMaticooAdapter'
-  s.version          = '2.2.0.1'
-  s.summary          = 'zMaticoo iOS SDK AnyThinkiOS (TopOn) Adapter.'
+  s.version          = '2.2.0.2'
+  s.summary          = 'zMaticoo iOS SDK TopOn (AnyThinkiOS / TPNiOS) Adapter.'
 
   s.description      = <<-DESC
-This is zMaticoo iOS SDK AnyThinkiOS Adapter.
-Supports Latest TopOn and Legacy TopOn (AnyThinkiOS <= 6.4.92) via mutually exclusive subspecs.
+This is zMaticoo iOS SDK TopOn Adapter.
+Supports AnyThinkiOS and TPNiOS via mutually exclusive subspecs.
+Latest / Legacy code paths are also mutually exclusive (same adapter class names).
                        DESC
 
   s.homepage         = 'https://www.zmaticoo.com'
@@ -24,9 +25,14 @@ Supports Latest TopOn and Legacy TopOn (AnyThinkiOS <= 6.4.92) via mutually excl
   s.ios.deployment_target = '12.0'
   s.static_framework = true
 
-  # Latest 与 Legacy 互斥：类名相同（TopOn 按类名注册），同一 target 只能选其一。
-  #   pod 'TopOnzMaticooAdapter'                              → Latest（默认）
-  #   pod 'TopOnzMaticooAdapter', :subspecs => ['Legacy']     → AnyThinkiOS ≤ 6.4.92
+  # 互斥约束：
+  # 1) Latest* 与 Legacy* 类名相同，同一 target 只能选其一
+  # 2) *AnyThink 与 *TPN 会带入同名 xcframework，同一 target 只能选其一
+  #
+  #   pod 'TopOnzMaticooAdapter'                                   → Latest（AnyThinkiOS，默认）
+  #   pod 'TopOnzMaticooAdapter', :subspecs => ['Legacy']           → Legacy + AnyThinkiOS ≤ 6.4.92
+  #   pod 'TopOnzMaticooAdapter', :subspecs => ['LatestTPN']        → Latest + TPNiOS
+  #   pod 'TopOnzMaticooAdapter', :subspecs => ['LegacyTPN']        → Legacy + TPNiOS ≤ 6.4.92
   s.default_subspec = 'Latest'
 
   # 当前 TopOn / AnyThinkiOS（> 6.4.92）适配器
@@ -41,5 +47,19 @@ Supports Latest TopOn and Legacy TopOn (AnyThinkiOS <= 6.4.92) via mutually excl
     ss.source_files = 'ClassesLegacy/**/*.{h,m}'
     ss.dependency 'zMaticoo'
     ss.dependency 'AnyThinkiOS', '<= 6.4.92'
+  end
+
+  # 当前 TopOn / TPNiOS（与 Latest 同代码，依赖改为 TPNiOS，避免与宿主 TPNiOS 撞 framework）
+  s.subspec 'LatestTPN' do |ss|
+    ss.source_files = 'Classes/**/*.{h,m}'
+    ss.dependency 'zMaticoo'
+    ss.dependency 'TPNiOS'
+  end
+
+  # Legacy API + TPNiOS（与 Legacy 同代码；用于宿主已接入 TPNiOS 且版本 ≤ 6.4.92）
+  s.subspec 'LegacyTPN' do |ss|
+    ss.source_files = 'ClassesLegacy/**/*.{h,m}'
+    ss.dependency 'zMaticoo'
+    ss.dependency 'TPNiOS', '<= 6.4.92'
   end
 end
