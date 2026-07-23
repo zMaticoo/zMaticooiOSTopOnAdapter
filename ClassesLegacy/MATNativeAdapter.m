@@ -267,8 +267,6 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
 
     UIView *container = self.ADView.selfRenderView ?: self.ADView;
     NSArray<UIView *> *clickables = [self.ADView clickableViews];
-    [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_show"
-                                                       des:MATToponAdapterEventDes(nativeAd.placementID, MATToponAdapterAdTypeNative, nil)];
     [nativeAd registerViewForInteraction:container
                                mediaView:mediaView
                           clickableViews:clickables];
@@ -482,7 +480,8 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
                                                                 price:[NSString stringWithFormat:@"%f", bidResponse.price]
                                                          currencyType:ATBiddingCurrencyTypeUS
                                                    expirationInterval:expire
-                                                         customObject:nil];
+                                                         customObject:bidResponse];
+            bidInfo.networkFirmID = unitGroupModel.networkFirmID;
             if (completion) {
                 completion(bidInfo, nil);
             }
@@ -495,7 +494,9 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
                                 userInfo:(NSDictionary *)userInfo {
     (void)price;
     (void)userInfo;
-    MATBiddingResponse *bidResponse = [MATToponLegacyBidCache bidResponseAttachedToAdObject:customObject];
+    MATBiddingResponse *bidResponse = [customObject isKindOfClass:[MATBiddingResponse class]]
+        ? (MATBiddingResponse *)customObject
+        : [MATToponLegacyBidCache bidResponseAttachedToAdObject:customObject];
     if (bidResponse) {
         [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_bid_win"
                                                            des:MATToponAdapterEventDes(nil, MATToponAdapterAdTypeNative, nil)];

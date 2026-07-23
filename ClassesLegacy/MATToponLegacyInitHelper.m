@@ -42,6 +42,10 @@
         return;
     }
 
+    // TopOn 隐私态可能运行时变更（UMP / setDataConsentSet / personalizedAd 等），每次 load/bid 前同步一次。
+    [self applyPrivacyFromTopOn];
+    [[MaticooAds shareSDK] setMediationName:@"topon"];
+
     if ([[MaticooAds shareSDK] isInitSuccess]) {
         completion(nil);
         return;
@@ -55,9 +59,6 @@
                                    userInfo:@{NSLocalizedDescriptionKey: @"app_key is missing or invalid"}]);
         return;
     }
-
-    [self applyPrivacyFromTopOn];
-    [[MaticooAds shareSDK] setMediationName:@"topon"];
 
     // MaticooAds 支持并发 init：若正在初始化会挂到 pendingInitCallbacks，成功后一并回调。
     [[MaticooAds shareSDK] initSDK:appkey onSuccess:^{

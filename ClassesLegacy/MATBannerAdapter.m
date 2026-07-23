@@ -262,9 +262,6 @@ presentingViewController:(UIViewController *)viewController {
         ((MATBannerAd *)bannerView).delegate = customEvent;
     }
 
-    [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_show"
-                                                       des:MATToponAdapterEventDes(customEvent.placementId, MATToponAdapterAdTypeBanner, nil)];
-
     dispatch_async(dispatch_get_main_queue(), ^{
         if (!bannerView || !view) {
             return;
@@ -325,7 +322,8 @@ presentingViewController:(UIViewController *)viewController {
                                                                 price:[NSString stringWithFormat:@"%f", bidResponse.price]
                                                          currencyType:ATBiddingCurrencyTypeUS
                                                    expirationInterval:expire
-                                                         customObject:nil];
+                                                         customObject:bidResponse];
+            bidInfo.networkFirmID = unitGroupModel.networkFirmID;
             if (completion) {
                 completion(bidInfo, nil);
             }
@@ -338,7 +336,9 @@ presentingViewController:(UIViewController *)viewController {
                                 userInfo:(NSDictionary *)userInfo {
     (void)price;
     (void)userInfo;
-    MATBiddingResponse *bidResponse = [MATToponLegacyBidCache bidResponseAttachedToAdObject:customObject];
+    MATBiddingResponse *bidResponse = [customObject isKindOfClass:[MATBiddingResponse class]]
+        ? (MATBiddingResponse *)customObject
+        : [MATToponLegacyBidCache bidResponseAttachedToAdObject:customObject];
     if (bidResponse) {
         [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_bid_win"
                                                            des:MATToponAdapterEventDes(nil, MATToponAdapterAdTypeBanner, nil)];
