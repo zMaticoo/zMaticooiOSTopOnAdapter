@@ -12,6 +12,9 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface MATToponLegacyInitHelper : NSObject
 
+/// 仅同步 GDPR（`dataConsentSet` → `setConsentStatus:`）；与 COPPA 分开，供 show 前调用。
++ (void)applyGDPRFromTopOn;
+
 /// 应用隐私透传并确保 `MaticooAds` 初始化完成（已成功则同步回调）。
 + (void)ensureInitializedWithServerInfo:(NSDictionary *)serverInfo
                              completion:(void (^)(NSError * _Nullable error))completion;

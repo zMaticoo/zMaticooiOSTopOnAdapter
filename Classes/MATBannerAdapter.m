@@ -72,6 +72,37 @@
 
 @implementation MATBannerAdapter
 
+// 广告对象在主线程 load 写，TopOn 可能在其它线程读 dealloc / HB 回调后再 load。
+// bidResponse 在主线程的 bidding completion 里写，TopOn 在自己的线程读 -didReceiveBidResult:。
+// ARC 并发读写 strong 属性会读到哨兵指针 0x400000000000bad0，读写必须同锁。
+// 持锁只保护指针交换；拿到局部变量后再调 SDK，不要在 @synchronized(self) 内调外部方法。
+@synthesize bannerAd = _bannerAd;
+@synthesize bidResponse = _bidResponse;
+
+- (MATBannerAd *)bannerAd {
+    @synchronized (self) {
+        return _bannerAd;
+    }
+}
+
+- (void)setBannerAd:(MATBannerAd *)bannerAd {
+    @synchronized (self) {
+        _bannerAd = bannerAd;
+    }
+}
+
+- (MATBiddingResponse *)bidResponse {
+    @synchronized (self) {
+        return _bidResponse;
+    }
+}
+
+- (void)setBidResponse:(MATBiddingResponse *)bidResponse {
+    @synchronized (self) {
+        _bidResponse = bidResponse;
+    }
+}
+
 - (void)loadADWithArgument:(ATAdMediationArgument *)argument {
     id rawPlacement = argument.serverContentDic[@"placement_id"];
     MaticooToponAdapterDebugLog(@"%@ banner loadADWithArgument ENTRY adapter=%p thread=%@ main=%d placement_id(raw)=%@ cls=%@ serverKeys=%@",
@@ -99,24 +130,27 @@
     dispatch_async(dispatch_get_main_queue(), ^{
         MaticooToponAdapterDebugLog(@"%@ banner loadADWithArgument MAIN_BLOCK_BEGIN adapter=%p placement=%@", MATToponAdapterLogPrefix, self, placementIdentifier);
         [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load" des:MATToponAdapterEventDes(placementIdentifier, MATToponAdapterAdTypeBanner, nil)];
-        self->_bannerAd = [[MATBannerAd alloc] initWithPlacementID:placementIdentifier];
+        MATBannerAd *bannerAd = [[MATBannerAd alloc] initWithPlacementID:placementIdentifier];
         self->_delegate = [[MATBannerAdapterDelegate alloc] init];
         self->_delegate.adStatusBridge = self.adStatusBridge;
         self->_delegate.placementId = placementIdentifier;
-        self->_bannerAd.delegate = self->_delegate;
+        bannerAd.delegate = self->_delegate;
         NSMutableDictionary *extra = [NSMutableDictionary dictionary];
         if (localInfo != nil && localInfo.count > 0) {
             [extra addEntriesFromDictionary:[self ensureParams:localInfo]];
         }
         extra[@"source"] = MATToponAdapterMediationSourceValue;
-        [(MATBannerAd *)self->_bannerAd setLocalExtra:[extra copy]];
+        [bannerAd setLocalExtra:[extra copy]];
         id canCloseObj = localInfo[@"can_close_ad"];
         if ([canCloseObj isKindOfClass:[NSNumber class]]) {
-            ((MATBannerAd *)self->_bannerAd).canCloseAd = [(NSNumber *)canCloseObj boolValue];
+            bannerAd.canCloseAd = [(NSNumber *)canCloseObj boolValue];
         } else if ([canCloseObj isKindOfClass:[NSString class]]) {
-            ((MATBannerAd *)self->_bannerAd).canCloseAd = [(NSString *)canCloseObj boolValue];
+            bannerAd.canCloseAd = [(NSString *)canCloseObj boolValue];
         }
-        self->_bannerAd.frame = CGRectMake(0, 0, adSize.width, adSize.height);
+        // localExtra 经 ensureParams 后只剩 NSString 值，这里再把原始 localInfo 整体传一次，避免丢失非字符串值。
+        NSDictionary *extraMap = MATToponAdapterLoadExtraMapFromLocalInfo(localInfo);
+        bannerAd.frame = CGRectMake(0, 0, adSize.width, adSize.height);
+        self.bannerAd = bannerAd;
         id rawTrackingInfo = argument.serverContentDic[@"tracking_info_unit_group_model"];
         ATUnitGroupModel *trackingInfoUnitGroupModel =
             [rawTrackingInfo isKindOfClass:[ATUnitGroupModel class]] ? rawTrackingInfo : nil;
@@ -126,11 +160,11 @@
             param.placementId = placementIdentifier;
             param.adxId = @"topon_adapter_bidding";
             __weak __typeof__(self) weakSelf = self;
-            [MATBiddingRequest biddingRequestWithParameter:param completion:^(MATBiddingResponse * _Nullable bidResponse) {
+            [MATBiddingRequest biddingRequestWithParameter:param extra:extraMap completion:^(MATBiddingResponse * _Nullable bidResponse) {
                 __strong __typeof__(weakSelf) strongSelf = weakSelf;
                 if (!strongSelf) return;
                 BOOL bidOk = (bidResponse != nil && bidResponse.success);
-                NSString *tokenLog = bidResponse ? (bidResponse.bidToken ?: @"") : @"(nil)";
+                NSString *tokenLog = bidResponse ? (bidResponse.biddingRequestId ?: @"") : @"(nil)";
                 MaticooToponAdapterDebugLog(@"%@ banner loadADWithArgument HB_BIDDING_RESPONSE adapter=%p placement=%@ success=%d price=%f token=%@",
                       MATToponAdapterLogPrefix, strongSelf, placementIdentifier, bidOk, bidResponse ? bidResponse.price : 0, tokenLog);
                 dispatch_async(dispatch_get_main_queue(), ^{
@@ -139,7 +173,7 @@
                     if (bidOk) {
                         strongSelfMain.delegate.bidPriceStr = [NSString stringWithFormat:@"%f", bidResponse.price];
                         strongSelfMain.bidResponse = bidResponse;
-                        [strongSelfMain.bannerAd loadAd:bidResponse.bidToken];
+                        [strongSelfMain.bannerAd loadAd:bidResponse.biddingRequestId extraMap:extraMap];
                     } else {
                         [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed" des:MATToponAdapterEventDes(placementIdentifier, MATToponAdapterAdTypeBanner, @"bid request failed")];
                         [strongSelfMain.adStatusBridge atOnAdLoadFailed:MATToponAdapterErrorBiddingFailed(@"banner")
@@ -148,29 +182,27 @@
                 });
             }];
         } else {
-            [self->_bannerAd loadAd];
+            [bannerAd loadAdExtraMap:extraMap];
         }
         MaticooToponAdapterDebugLog(@"%@ banner loadADWithArgument MAIN_BLOCK_END adapter=%p placement=%@ bannerAd=%p delegate=%p",
-              MATToponAdapterLogPrefix, self, placementIdentifier, self->_bannerAd, self->_delegate);
+              MATToponAdapterLogPrefix, self, placementIdentifier, bannerAd, self->_delegate);
     });
 }
 
 - (void)didReceiveBidResult:(ATBidWinLossResult *)result {
     if (result.bidResultType == ATBidWinLossResultTypeWin) {
+        MATBiddingResponse *bidResponse = self.bidResponse;
         NSString *winPrice = result.winPrice;
-        if (winPrice == nil) {
-            MATBiddingResponse *bidResponse = self.bidResponse;
-            if (bidResponse) {
-                winPrice = [NSString stringWithFormat:@"%f", bidResponse.price];
-            }
+        if (winPrice == nil && bidResponse) {
+            winPrice = [NSString stringWithFormat:@"%f", bidResponse.price];
         }
         MaticooToponAdapterDebugLog(@"%@ banner didReceiveBidResult WIN adapter=%p placement=%@ winPrice=%@ secondPrice=%@",
               MATToponAdapterLogPrefix, self, self.placementId, winPrice, result.secondPrice);
         NSString *des = [NSString stringWithFormat:@"{\"placementId\":\"%@\",\"adType\":%ld,\"source\":\"%@\",\"winPrice\":\"%@\",\"secondPrice\":\"%@\"}",
                          self.placementId ?: @"", (long)MATToponAdapterAdTypeBanner, MATToponAdapterMediationSourceValue, winPrice ?: @"", result.secondPrice ?: @""];
         [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_bid_win" des:des];
-        if (self.bidResponse) {
-            [MATBiddingRequest reportTrack:self.bidResponse];
+        if (bidResponse) {
+            [MATBiddingRequest reportTrack:bidResponse];
         }
     } else {
         NSString *lossReason = @"other reason";
@@ -218,9 +250,12 @@
     MaticooToponAdapterDebugLog(@"%@ banner MATBannerAdapter dealloc adapter=%p placementId=%@ thread=%@ main=%d",
           MATToponAdapterLogPrefix, self, _placementId, [NSThread currentThread], [NSThread isMainThread]);
     [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_destroy" des:MATToponAdapterEventDes(_placementId, MATToponAdapterAdTypeBanner, nil)];
-    MATBannerAd *ad = _bannerAd;
-    _bannerAd.delegate = nil;
-    _bannerAd = nil;
+    MATBannerAd *ad = nil;
+    @synchronized (self) {
+        ad = _bannerAd;
+        _bannerAd = nil;
+    }
+    ad.delegate = nil;
     if (ad) {
         dispatch_async(dispatch_get_main_queue(), ^{
             [ad destroy];

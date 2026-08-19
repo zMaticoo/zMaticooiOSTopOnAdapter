@@ -25,9 +25,29 @@
 
 @implementation MATBannerCustomEvent
 
+// load 在主线程写 bannerAd，TopOn 可能在其它线程 dealloc / destroy。
+// ARC 并发读写 nonatomic strong 会读到哨兵指针 0x400000000000bad0，读写必须同锁。
+// 持锁只保护指针交换；拿到局部变量后再调 SDK。
+@synthesize bannerAd = _bannerAd;
+
+- (MATBannerAd *)bannerAd {
+    @synchronized (self) {
+        return _bannerAd;
+    }
+}
+
+- (void)setBannerAd:(MATBannerAd *)bannerAd {
+    @synchronized (self) {
+        _bannerAd = bannerAd;
+    }
+}
+
 - (void)maticoo_destroyBannerAd {
-    MATBannerAd *ad = self.bannerAd;
-    self.bannerAd = nil;
+    MATBannerAd *ad = nil;
+    @synchronized (self) {
+        ad = _bannerAd;
+        _bannerAd = nil;
+    }
     if (!ad) {
         return;
     }
@@ -86,8 +106,11 @@
 
 - (void)dealloc {
     NSString *placementId = _placementId;
-    MATBannerAd *ad = _bannerAd;
-    _bannerAd = nil;
+    MATBannerAd *ad = nil;
+    @synchronized (self) {
+        ad = _bannerAd;
+        _bannerAd = nil;
+    }
     if (ad) {
         dispatch_async(dispatch_get_main_queue(), ^{
             [ad destroy];
@@ -156,7 +179,8 @@
     customEvent.requestCompletionBlock = completion;
     self.customEvent = customEvent;
 
-    ATUnitGroupModel *unitGroup = serverInfo[kATAdapterCustomInfoUnitGroupModelKey];
+    id rawUnitGroup = serverInfo[kATAdapterCustomInfoUnitGroupModelKey];
+    ATUnitGroupModel *unitGroup = [rawUnitGroup isKindOfClass:[ATUnitGroupModel class]] ? rawUnitGroup : nil;
     NSString *bidId = serverInfo[kATAdapterCustomInfoBuyeruIdKey];
     NSString *cacheKey = unitGroup.unitID.length > 0 ? unitGroup.unitID : placementIdentifier;
 
@@ -212,13 +236,15 @@
             } else if ([canCloseObj isKindOfClass:[NSString class]]) {
                 ad.canCloseAd = [(NSString *)canCloseObj boolValue];
             }
+            // localExtra 经 ensureParams 后只剩 NSString 值，这里再把原始 localInfo 整体传一次，避免丢失非字符串值。
+            NSDictionary *extraMap = MATToponAdapterLoadExtraMapFromLocalInfo(safeLocalInfo);
 
             if ([bidId isKindOfClass:[NSString class]] && bidId.length > 0) {
                 MATBiddingResponse *bidResponse = [MATToponLegacyBidCache bidResponseForKey:cacheKey];
                 [MATToponLegacyBidCache removeBidResponseForKey:cacheKey];
-                if (bidResponse.bidToken.length > 0) {
+                if (bidResponse.biddingRequestId.length > 0) {
                     [MATToponLegacyBidCache attachBidResponse:bidResponse toAdObject:ad];
-                    [ad loadAd:bidResponse.bidToken];
+                    [ad loadAd:bidResponse.biddingRequestId extraMap:extraMap];
                 } else {
                     [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed"
                                                                        des:MATToponAdapterEventDes(placementIdentifier, MATToponAdapterAdTypeBanner, @"bid request failed")];
@@ -227,7 +253,7 @@
                     strongSelfMain.customEvent = nil;
                 }
             } else {
-                [ad loadAd];
+                [ad loadAdExtraMap:extraMap];
             }
         });
     }];
@@ -249,8 +275,11 @@
 + (void)showBanner:(ATBanner *)banner
             inView:(UIView *)view
 presentingViewController:(UIViewController *)viewController {
-    MATBannerCustomEvent *customEvent = (MATBannerCustomEvent *)banner.customEvent;
-    if (customEvent) {
+    // banner.customEvent 声明为基类 ATBannerCustomEvent，下转到我们的子类编译期无提示；
+    // loadInputShowViewController 是自有成员，拿到别家网络的 customEvent 会 unrecognized selector。
+    MATBannerCustomEvent *customEvent = nil;
+    if ([banner.customEvent isKindOfClass:[MATBannerCustomEvent class]]) {
+        customEvent = (MATBannerCustomEvent *)banner.customEvent;
         customEvent.loadInputShowViewController = viewController;
     }
 
@@ -305,9 +334,10 @@ presentingViewController:(UIViewController *)viewController {
         MATBiddingRequestParameter *param = [[MATBiddingRequestParameter alloc] init];
         param.placementId = placementIdentifier;
         param.adxId = @"topon_adapter_bidding";
+        NSDictionary *bidExtraMap = MATToponAdapterLoadExtraMapFromLocalInfo(info);
 
-        [MATBiddingRequest biddingRequestWithParameter:param completion:^(MATBiddingResponse * _Nullable bidResponse) {
-            BOOL ok = (bidResponse != nil && bidResponse.success && bidResponse.bidToken.length > 0);
+        [MATBiddingRequest biddingRequestWithParameter:param extra:bidExtraMap completion:^(MATBiddingResponse * _Nullable bidResponse) {
+            BOOL ok = (bidResponse != nil && bidResponse.success && bidResponse.biddingRequestId.length > 0);
             if (!ok) {
                 if (completion) {
                     completion(nil, bidResponse.error ?: MATToponAdapterErrorBiddingFailed(@"banner"));

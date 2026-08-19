@@ -30,16 +30,71 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
 
 @implementation MATNativeCustomEvent
 
+// 这三个属性在主线程（load 派发）和 SDK 回调线程（buildAssets）写，而 -maticoo_destroyNativeAd
+// 会从 SDK 回调线程和 TopOn 的 renderer 线程读写。ARC 并发读写 strong 属性会读到哨兵指针
+// 0x400000000000bad0，读写必须同锁。
+@synthesize maticooAd = _maticooAd;
+@synthesize mediaView = _mediaView;
+@synthesize adChoicesView = _adChoicesView;
+
+- (MATNativeAd *)maticooAd {
+    @synchronized (self) {
+        return _maticooAd;
+    }
+}
+
+- (void)setMaticooAd:(MATNativeAd *)maticooAd {
+    @synchronized (self) {
+        _maticooAd = maticooAd;
+    }
+}
+
+- (MATMediaView *)mediaView {
+    @synchronized (self) {
+        return _mediaView;
+    }
+}
+
+- (void)setMediaView:(MATMediaView *)mediaView {
+    @synchronized (self) {
+        _mediaView = mediaView;
+    }
+}
+
+- (MATAdChoicesView *)adChoicesView {
+    @synchronized (self) {
+        return _adChoicesView;
+    }
+}
+
+- (void)setAdChoicesView:(MATAdChoicesView *)adChoicesView {
+    @synchronized (self) {
+        _adChoicesView = adChoicesView;
+    }
+}
+
 - (void)maticoo_destroyNativeAd {
-    MATNativeAd *ad = self.maticooAd;
-    self.maticooAd = nil;
-    self.mediaView = nil;
-    self.adChoicesView = nil;
-    if (!ad) {
+    // 取出并清空放在同一个临界区里，保证多线程重复调用时只会 destroy 一次。
+    // UIView 子类（mediaView / adChoicesView）的 release 必须离开锁、并落到主线程，
+    // 避免非主线程持锁触发 UIView dealloc（_UIViewWillDestructorAssertion）。
+    MATNativeAd *ad = nil;
+    MATMediaView *mediaView = nil;
+    MATAdChoicesView *adChoicesView = nil;
+    @synchronized (self) {
+        ad = _maticooAd;
+        _maticooAd = nil;
+        mediaView = _mediaView;
+        _mediaView = nil;
+        adChoicesView = _adChoicesView;
+        _adChoicesView = nil;
+    }
+    if (!ad && !mediaView && !adChoicesView) {
         return;
     }
     dispatch_async(dispatch_get_main_queue(), ^{
         [ad destroy];
+        (void)mediaView;
+        (void)adChoicesView;
     });
 }
 
@@ -195,13 +250,22 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
 
 - (void)dealloc {
     NSString *placementId = _placementId;
-    MATNativeAd *ad = _maticooAd;
-    _maticooAd = nil;
-    _mediaView = nil;
-    _adChoicesView = nil;
-    if (ad) {
+    MATNativeAd *ad = nil;
+    MATMediaView *mediaView = nil;
+    MATAdChoicesView *adChoicesView = nil;
+    @synchronized (self) {
+        ad = _maticooAd;
+        _maticooAd = nil;
+        mediaView = _mediaView;
+        _mediaView = nil;
+        adChoicesView = _adChoicesView;
+        _adChoicesView = nil;
+    }
+    if (ad || mediaView || adChoicesView) {
         dispatch_async(dispatch_get_main_queue(), ^{
             [ad destroy];
+            (void)mediaView;
+            (void)adChoicesView;
         });
     }
     MaticooToponAdapterDebugLog(@"%@ native customEvent dealloc placement=%@", MATToponAdapterLogPrefix, placementId);
@@ -370,7 +434,8 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
     }
     self.customEvent = customEvent;
 
-    ATUnitGroupModel *unitGroup = serverInfo[kATAdapterCustomInfoUnitGroupModelKey];
+    id rawUnitGroup = serverInfo[kATAdapterCustomInfoUnitGroupModelKey];
+    ATUnitGroupModel *unitGroup = [rawUnitGroup isKindOfClass:[ATUnitGroupModel class]] ? rawUnitGroup : nil;
     NSString *bidId = serverInfo[kATAdapterCustomInfoBuyeruIdKey];
     NSString *cacheKey = unitGroup.unitID.length > 0 ? unitGroup.unitID : placementIdentifier;
 
@@ -398,13 +463,22 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
             MATNativeAd *ad = [[MATNativeAd alloc] initWithPlacementID:placementIdentifier];
             ad.delegate = eventMain;
             eventMain.maticooAd = ad;
+            NSNumber *isMuted = MATToponAdapterIsMutedFromLocalInfo(safeLocalInfo);
+            if (isMuted != nil) {
+                MATVideoOptions *videoOpts = [[MATVideoOptions alloc] init];
+                videoOpts.startMuted = isMuted.boolValue;
+                MATNativeAdOptions *nativeOpts = [[MATNativeAdOptions alloc] init];
+                nativeOpts.videoOptions = videoOpts;
+                [ad setNativeAdOptions:nativeOpts];
+            }
+            NSDictionary *extraMap = MATToponAdapterNativeLoadExtraMapFromLocalInfo(safeLocalInfo);
 
             if ([bidId isKindOfClass:[NSString class]] && bidId.length > 0) {
                 MATBiddingResponse *bidResponse = [MATToponLegacyBidCache bidResponseForKey:cacheKey];
                 [MATToponLegacyBidCache removeBidResponseForKey:cacheKey];
-                if (bidResponse.bidToken.length > 0) {
+                if (bidResponse.biddingRequestId.length > 0) {
                     [MATToponLegacyBidCache attachBidResponse:bidResponse toAdObject:ad];
-                    [ad loadAd:bidResponse.bidToken];
+                    [ad loadAd:bidResponse.biddingRequestId extraMap:extraMap];
                 } else {
                     [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed"
                                                                        des:MATToponAdapterEventDes(placementIdentifier, MATToponAdapterAdTypeNative, @"bid request failed")];
@@ -413,7 +487,7 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
                     strongSelfMain.customEvent = nil;
                 }
             } else {
-                [ad loadAd];
+                [ad loadAdExtraMap:extraMap];
             }
         });
     }];
@@ -463,9 +537,10 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
         MATBiddingRequestParameter *param = [[MATBiddingRequestParameter alloc] init];
         param.placementId = placementIdentifier;
         param.adxId = @"topon_adapter_bidding";
+        NSDictionary *bidExtraMap = MATToponAdapterLoadExtraMapFromLocalInfo(info);
 
-        [MATBiddingRequest biddingRequestWithParameter:param completion:^(MATBiddingResponse * _Nullable bidResponse) {
-            BOOL ok = (bidResponse != nil && bidResponse.success && bidResponse.bidToken.length > 0);
+        [MATBiddingRequest biddingRequestWithParameter:param extra:bidExtraMap completion:^(MATBiddingResponse * _Nullable bidResponse) {
+            BOOL ok = (bidResponse != nil && bidResponse.success && bidResponse.biddingRequestId.length > 0);
             if (!ok) {
                 if (completion) {
                     completion(nil, bidResponse.error ?: MATToponAdapterErrorBiddingFailed(@"native"));

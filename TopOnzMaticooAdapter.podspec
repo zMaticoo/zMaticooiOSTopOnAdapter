@@ -8,7 +8,7 @@
 
 Pod::Spec.new do |s|
   s.name             = 'TopOnzMaticooAdapter'
-  s.version          = '2.2.0.2'
+  s.version          = '2.3.0'
   s.summary          = 'zMaticoo iOS SDK TopOn (AnyThinkiOS / TPNiOS) Adapter.'
 
   s.description      = <<-DESC
@@ -38,28 +38,28 @@ Latest / Legacy code paths are also mutually exclusive (same adapter class names
   # 当前 TopOn / AnyThinkiOS（> 6.4.92）适配器
   s.subspec 'Latest' do |ss|
     ss.source_files = 'Classes/**/*.{h,m}'
-    ss.dependency 'zMaticoo'
+    ss.dependency 'zMaticoo', '>= 2.3.0'
     ss.dependency 'AnyThinkiOS'
   end
 
   # TopOn / AnyThinkiOS 6.4.92 及以前版本兼容适配器
   s.subspec 'Legacy' do |ss|
     ss.source_files = 'ClassesLegacy/**/*.{h,m}'
-    ss.dependency 'zMaticoo'
+    ss.dependency 'zMaticoo', '>= 2.3.0'
     ss.dependency 'AnyThinkiOS', '<= 6.4.92'
   end
 
   # 当前 TopOn / TPNiOS（与 Latest 同代码，依赖改为 TPNiOS，避免与宿主 TPNiOS 撞 framework）
   s.subspec 'LatestTPN' do |ss|
     ss.source_files = 'Classes/**/*.{h,m}'
-    ss.dependency 'zMaticoo'
+    ss.dependency 'zMaticoo', '>= 2.3.0'
     ss.dependency 'TPNiOS'
   end
 
   # Legacy API + TPNiOS（与 Legacy 同代码；用于宿主已接入 TPNiOS 且版本 ≤ 6.4.92）
   s.subspec 'LegacyTPN' do |ss|
     ss.source_files = 'ClassesLegacy/**/*.{h,m}'
-    ss.dependency 'zMaticoo'
+    ss.dependency 'zMaticoo', '>= 2.3.0'
     ss.dependency 'TPNiOS', '<= 6.4.92'
   end
 end

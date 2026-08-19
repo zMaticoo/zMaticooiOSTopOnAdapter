@@ -11,6 +11,18 @@
 
 @implementation MATToponLegacyInitHelper
 
++ (void)applyGDPRFromTopOn {
+    ATDataConsentSet consent = [[ATAPI sharedInstance] dataConsentSet];
+    if (consent != ATDataConsentSetPersonalized && consent != ATDataConsentSetNonpersonalized) {
+        return;
+    }
+    MaticooAds *maticooAds = [MaticooAds shareSDK];
+    if (![maticooAds respondsToSelector:@selector(setConsentStatus:)]) {
+        return;
+    }
+    [maticooAds setConsentStatus:(consent == ATDataConsentSetPersonalized)];
+}
+
 + (void)applyPrivacyFromTopOn {
     MaticooAds *maticooAds = [MaticooAds shareSDK];
 
@@ -21,12 +33,7 @@
         }
     }
 
-    ATDataConsentSet consent = [[ATAPI sharedInstance] dataConsentSet];
-    if (consent == ATDataConsentSetPersonalized || consent == ATDataConsentSetNonpersonalized) {
-        if ([maticooAds respondsToSelector:@selector(setConsentStatus:)]) {
-            [maticooAds setConsentStatus:(consent == ATDataConsentSetPersonalized)];
-        }
-    }
+    [self applyGDPRFromTopOn];
 
     id ageValue = [[ATSDKGlobalSetting sharedManager].customData valueForKey:kATCustomDataAgeKey];
     if ([ageValue isKindOfClass:[NSNumber class]]) {

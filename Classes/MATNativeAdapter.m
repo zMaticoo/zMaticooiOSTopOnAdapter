@@ -25,25 +25,48 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
 
 @implementation MATToponNativeAdWrapper
 
+// maticooAd 在 SDK 回调线程写（nativeAdLoadSuccess:），而 TopOn 会在主线程 render 时调
+// -registerClickableViews:... 、在自己的线程调 -destroyNative。ARC 并发读写 strong 属性会读到
+// 哨兵指针 0x400000000000bad0，读写必须同锁。
+@synthesize maticooAd = _maticooAd;
+
+- (MATNativeAd *)maticooAd {
+    @synchronized (self) {
+        return _maticooAd;
+    }
+}
+
+- (void)setMaticooAd:(MATNativeAd *)maticooAd {
+    @synchronized (self) {
+        _maticooAd = maticooAd;
+    }
+}
+
 - (void)destroyNative {
-    [self.maticooAd destroy];
-    self.maticooAd = nil;
+    // 取出并清空放在同一个临界区里，保证多线程重复调用时只会 destroy 一次。
+    MATNativeAd *ad = nil;
+    @synchronized (self) {
+        ad = _maticooAd;
+        _maticooAd = nil;
+    }
+    [ad destroy];
 }
 
 - (void)registerClickableViews:(NSArray<UIView *> *)clickableViews
                   withContainer:(UIView *)container
                registerArgument:(ATNativeRegisterArgument *)registerArgument {
     (void)registerArgument;
-    if (!self.maticooAd || !container) return;
+    MATNativeAd *ad = self.maticooAd;
+    if (!ad || !container) return;
     MATMediaView *mediaView = nil;
     if ([self.mediaView isKindOfClass:[MATMediaView class]]) {
         mediaView = (MATMediaView *)self.mediaView;
     }
     [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_show"
-                                                       des:MATToponAdapterEventDes(self.maticooAd.placementID, MATToponAdapterAdTypeNative, nil)];
-    [self.maticooAd registerViewForInteraction:container
-                                     mediaView:mediaView
-                                clickableViews:clickableViews];
+                                                       des:MATToponAdapterEventDes(ad.placementID, MATToponAdapterAdTypeNative, nil)];
+    [ad registerViewForInteraction:container
+                         mediaView:mediaView
+                    clickableViews:clickableViews];
 }
 
 - (BOOL)isExpressAd {
@@ -220,7 +243,40 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
 
 @implementation MATNativeAdapter
 
+// 广告对象在主线程 load 写，TopOn 可能在其它线程 dealloc。
+// bidResponse 在主线程的 bidding completion 里写，TopOn 在自己的线程读 -didReceiveBidResult:。
+// ARC 并发读写 strong 属性会读到哨兵指针 0x400000000000bad0，读写必须同锁。
+// 持锁只保护指针交换；拿到局部变量后再调 SDK，不要在 @synchronized(self) 内调外部方法。
+@synthesize maticooAd = _maticooAd;
+@synthesize bidResponse = _bidResponse;
+
+- (MATNativeAd *)maticooAd {
+    @synchronized (self) {
+        return _maticooAd;
+    }
+}
+
+- (void)setMaticooAd:(MATNativeAd *)maticooAd {
+    @synchronized (self) {
+        _maticooAd = maticooAd;
+    }
+}
+
+- (MATBiddingResponse *)bidResponse {
+    @synchronized (self) {
+        return _bidResponse;
+    }
+}
+
+- (void)setBidResponse:(MATBiddingResponse *)bidResponse {
+    @synchronized (self) {
+        _bidResponse = bidResponse;
+    }
+}
+
 - (void)loadADWithArgument:(ATAdMediationArgument *)argument {
+    [super loadADWithArgument:argument];
+
     NSString *placementIdentifier = argument.serverContentDic[@"placement_id"];
     if (![placementIdentifier isKindOfClass:[NSString class]] || placementIdentifier.length == 0) {
         [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed"
@@ -233,6 +289,7 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
     MaticooToponAdapterDebugLog(@"%@ native loadADWithArgument entry adapter=%p argument=%p placement=%@ thread=%@ main=%d",
           MATToponAdapterLogPrefix, self, argument, placementIdentifier, [NSThread currentThread], [NSThread isMainThread]);
     NSDictionary *localInfo = [argument.localInfoDic isKindOfClass:[NSDictionary class]] ? argument.localInfoDic : nil;
+    NSNumber *isMuted = MATToponAdapterIsMutedFromLocalInfo(localInfo);
     BOOL useImageSelfRender = NO;
     if (localInfo) {
         id useImageSelfRenderObj = localInfo[kUseImageSelfRenderKey];
@@ -253,21 +310,29 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
         self.delegate.placementId = placementIdentifier;
         self.delegate.useImageSelfRender = useImageSelfRender;
         self.maticooAd.delegate = self.delegate;
+        if (isMuted != nil) {
+            MATVideoOptions *videoOpts = [[MATVideoOptions alloc] init];
+            videoOpts.startMuted = isMuted.boolValue;
+            MATNativeAdOptions *nativeOpts = [[MATNativeAdOptions alloc] init];
+            nativeOpts.videoOptions = videoOpts;
+            [self.maticooAd setNativeAdOptions:nativeOpts];
+        }
+        NSDictionary *extraMap = MATToponAdapterNativeLoadExtraMapFromLocalInfo(localInfo);
         if (trackingInfo && trackingInfo.headerBidding) {
             MATBiddingRequestParameter *param = [[MATBiddingRequestParameter alloc] init];
             param.placementId = placementIdentifier;
             param.adxId = @"topon_adapter_bidding";
             __weak __typeof__(self) weakSelf = self;
-            [MATBiddingRequest biddingRequestWithParameter:param completion:^(MATBiddingResponse * _Nullable bidResponse) {
+            [MATBiddingRequest biddingRequestWithParameter:param extra:extraMap completion:^(MATBiddingResponse * _Nullable bidResponse) {
                 __strong __typeof__(weakSelf) strongSelf = weakSelf;
                 if (!strongSelf) return;
                 dispatch_async(dispatch_get_main_queue(), ^{
-                    if (bidResponse.success && bidResponse.bidToken) {
+                    if (bidResponse.success && bidResponse.biddingRequestId) {
                         strongSelf.delegate.bidPriceStr = [NSString stringWithFormat:@"%f", bidResponse.price];
                         strongSelf.bidResponse = bidResponse;
-                        [strongSelf.maticooAd loadAd:bidResponse.bidToken];
+                        [strongSelf.maticooAd loadAd:bidResponse.biddingRequestId extraMap:extraMap];
                         MaticooToponAdapterDebugLog(@"%@ native loadADWithArgument BIDDING_SUCCESS adapter=%p placement=%@ token=%@ price=%f",
-                              MATToponAdapterLogPrefix, strongSelf, placementIdentifier, bidResponse.bidToken, bidResponse.price);
+                              MATToponAdapterLogPrefix, strongSelf, placementIdentifier, bidResponse.biddingRequestId, bidResponse.price);
                     } else {
                         MaticooToponAdapterDebugLog(@"%@ native loadADWithArgument BIDDING_FAILED adapter=%p placement=%@",
                               MATToponAdapterLogPrefix, strongSelf, placementIdentifier);
@@ -279,29 +344,27 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
                 });
             }];
         } else {
-            [self.maticooAd loadAd];
+            [self.maticooAd loadAdExtraMap:extraMap];
         }
         MaticooToponAdapterDebugLog(@"%@ native loadADWithArgument MAIN_BLOCK_END adapter=%p placement=%@ nativeAd=%p delegate=%p",
-              MATToponAdapterLogPrefix, self, placementIdentifier, self->_maticooAd, self->_delegate);
+              MATToponAdapterLogPrefix, self, placementIdentifier, self.maticooAd, self.delegate);
     });
 }
 
 - (void)didReceiveBidResult:(ATBidWinLossResult *)result {
     if (result.bidResultType == ATBidWinLossResultTypeWin) {
+        MATBiddingResponse *bidResponse = self.bidResponse;
         NSString *winPrice = result.winPrice;
-        if (winPrice == nil) {
-            MATBiddingResponse *bidResponse = self.bidResponse;
-            if (bidResponse) {
-                winPrice = [NSString stringWithFormat:@"%f", bidResponse.price];
-            }
+        if (winPrice == nil && bidResponse) {
+            winPrice = [NSString stringWithFormat:@"%f", bidResponse.price];
         }
         MaticooToponAdapterDebugLog(@"%@ native didReceiveBidResult WIN adapter=%p placement=%@ winPrice=%@ secondPrice=%@",
               MATToponAdapterLogPrefix, self, self.placementId, winPrice, result.secondPrice);
         NSString *des = [NSString stringWithFormat:@"{\"placementId\":\"%@\",\"adType\":%ld,\"source\":\"%@\",\"winPrice\":\"%@\",\"secondPrice\":\"%@\"}",
                          self.placementId ?: @"", (long)MATToponAdapterAdTypeNative, MATToponAdapterMediationSourceValue, winPrice ?: @"", result.secondPrice ?: @""];
         [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_bid_win" des:des];
-        if (self.bidResponse) {
-            [MATBiddingRequest reportTrack:self.bidResponse];
+        if (bidResponse) {
+            [MATBiddingRequest reportTrack:bidResponse];
         }
     } else {
         NSString *lossReason = @"other reason";
@@ -329,9 +392,12 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
           MATToponAdapterLogPrefix, self, _placementId, [NSThread currentThread], [NSThread isMainThread]);
     [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_destroy"
                                                        des:MATToponAdapterEventDes(_placementId, MATToponAdapterAdTypeNative, nil)];
-    MATNativeAd *ad = _maticooAd;
-    _maticooAd.delegate = nil;
-    _maticooAd = nil;
+    MATNativeAd *ad = nil;
+    @synchronized (self) {
+        ad = _maticooAd;
+        _maticooAd = nil;
+    }
+    ad.delegate = nil;
     if (ad) {
         dispatch_async(dispatch_get_main_queue(), ^{
             [ad destroy];
